@@ -28,5 +28,6 @@ lasso_regressor = GridSearchCV(lasso, parameters, scoring='neg_mean_squared_erro
 lasso_regressor.fit(predictors_hsi, close_hsi)
 
 # Print best parameters
+print(lasso_regressor.summary())
 print(lasso_regressor.best_params_)
 print(lasso_regressor.best_score_)
