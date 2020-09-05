@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import cross_val_score, GridSearchCV
 from sklearn.linear_model import Ridge, Lasso
 
+# Data paths
 DATAPATH_SP = "data/SP500_aug_15to20.csv"
 DATAPATH_HSI = "data/HSI_aug_15to20.csv"
 # Read raw data of S&P 500 and HSI
