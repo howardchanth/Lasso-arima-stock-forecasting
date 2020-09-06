@@ -15,7 +15,6 @@ raw_data_hsi = pd.read_csv(DATA_PATH_HSI)
 # Preliminary Calculations
 
 # The stock price series
-
 S = raw_data_sp['Adj Close']
 
 # The series of return of stocks
@@ -45,10 +44,21 @@ mu = np.mean(returns)
 sigma = np.std(returns)
 
 # simulate scenarios
-scen_size = 3  # number of scenario
-b = {str(scene): np.random.normal(0, 1, int(N)) for scene in range(1, scen_size + 1)}
-W = {str(scene): b[str(scene)].cumsum() for scene in range(1, scen_size + 1)}
+scene_size = 3  # number of scenario
+b = {str(scene): np.random.normal(0, 1, int(N)) for scene in range(1, scene_size + 1)}
+W = {str(scene): b[str(scene)].cumsum() for scene in range(1, scene_size + 1)}
 
 # Compute drift and diffusion parameter
-drift = (mu - 0.5 * sigma**2) * t
-diffusion = {str(scen): sigma * W[str(scen)] for scen in range(1, scen_size + 1)}
+drift = (mu - 0.5 * sigma ** 2) * t
+diffusion = {str(scene): sigma * W[str(scene)] for scene in range(1, scene_size + 1)}
+
+# Predict the future stock prices
+S_pred = np.array([S_0 * np.exp(drift + diffusion[str(scene)]) for scene in range(1, scene_size + 1)])
+S_pred = np.insert(S_pred, 0, S_0, axis=1)
+
+# Calculate the mean of scenarios
+S_pred_mean = np.mean(S_pred, axis=1)
+
+# Compute confidence interva
+#
+# l
