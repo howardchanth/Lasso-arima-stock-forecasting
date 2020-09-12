@@ -8,28 +8,31 @@ from sklearn.model_selection import cross_val_score, GridSearchCV
 from sklearn.linear_model import Ridge, Lasso
 
 from statsmodels.graphics.tsaplots import plot_pacf
-from statsmodels.tsa.arima_model import ARIMA
+import pmdarima as pm
 
 
 class Forecaster(ABC):
     """Abstract class for financial forecaster"""
 
     def __init__(self, data_path):
-        """Initialize forecaster by reading the data series"""
+        """Initialize forecaster"""
+
+        # Reading the stock price data
         self.data_path = data_path
         self.raw_data = pd.read_csv(data_path)
+        self.series = self.raw_data['Adj Close']
 
     @abstractmethod
     def fit(self, *args, **kwargs):
         pass
 
-    def predict(self):
+    def predict(self, *args, **kwargs):
         pass
 
-    def confidence_interval(self):
+    def conf_int(self, n_period):
         pass
 
-    def validate(self):
+    def validate(self, test):
         pass
 
     def plot(self):
@@ -70,7 +73,20 @@ class GBMForecaster(Forecaster):
         # The array of simulation results
         self.S_pred = None
 
-    def fit(self, scene_size, dt=1, dur=365):
+    def fit(self, train):
+        """Fit model using the training data"""
+
+        self.S = train['Adj Close']
+        self.S_0 = self.S.iloc[-1]
+
+        # The series of return of stocks
+        # Return = (S_t+1 - S_t) / S_t
+        self.returns = (self.S.loc[1:] - self.S.shift(1).loc[1:]) / self.S.shift(1).loc[1:]
+
+        self.mu = np.mean(self.returns)
+        self.sigma = np.std(self.returns)
+
+    def predict(self, scene_size, dur, dt=1):
         """
             Simulate over scenarios and create an array of predicted stock prices
             :param scene_size: number of scenarios
@@ -92,17 +108,26 @@ class GBMForecaster(Forecaster):
         drift = (self.mu - 0.5 * self.sigma ** 2) * t
         diffusion = {str(scene): self.sigma * W[str(scene)] for scene in range(1, scene_size + 1)}
 
-        self.S_pred = np.array([self.S_0 * np.exp(drift + diffusion[str(scene)])
-                                for scene in range(1, scene_size + 1)])
-        self.S_pred = np.insert(self.S_pred, 0, self.S_0, axis=1)
+        S_pred = np.array([self.S_0 * np.exp(drift + diffusion[str(scene)])
+                           for scene in range(1, scene_size + 1)])
+        # S_pred = np.insert(S_pred, 0, self.S_0, axis=1)
 
-    def det_proj(self):
+        return S_pred
+
+    def validate(self, test):
+        dur = test.shape[0]
+        pred = self.predict(1000, dur)
+
+        mse = np.average((self.det_proj(pred) - test['Adj Close']) ** 2)
+
+        return mse
+
+    def det_proj(self, pred):
         """Deterministic projection"""
-        return np.mean(self.S_pred, axis=0)
+        return np.mean(pred, axis=0)
 
-    def confidence_interval(self):
+    def conf_int(self, n_period):
         # TODO: Need to double confirm whether naively sorting the array is appropriate
-        # TODO: Include a point projection
         sorted_price = np.sort(self.S_pred, axis=0)
 
         # Upper and lower limits
@@ -113,8 +138,8 @@ class GBMForecaster(Forecaster):
 
     def plot(self):
         series_pred = self.det_proj()
-        days = range(len(series_pred))
-        lower, upper = self.confidence_interval()
+        days = np.arange(len(series_pred))
+        lower, upper = self.conf_int()
 
         fig, ax = plt.subplots()
         ax.plot(days, series_pred)
@@ -139,42 +164,39 @@ class LassoForecaster(Forecaster):
     def fit(self, *args, **kwargs):
         self.regressor.fit(self.predictors, self.responses)
 
-    def confidence_interval(self):
+    def conf_int(self, n_period):
         pass
-
-
-# Date parser
-def parser(x):
-    return pd.datetime.strptime(x, '%Y-%m-%d')
 
 
 class ArimaForecaster(Forecaster):
 
     def __init__(self, data_path):
         super().__init__(data_path)
-        self.series = pd.read_csv(data_path, header=0, parse_dates=[0],
-                                  index_col=0, squeeze=True, date_parser=parser)
-        self.model = None  # Self-defined after evaluating the ACF and PACFs
-        self.model_fit = None
+        self.model = pm.auto_arima(self.series, start_p=1, start_q=1,
+                                   max_p=3, max_q=3, m=12,
+                                   start_P=0, seasonal=False,
+                                   d=1, D=1, trace=True,
+                                   error_action='ignore',
+                                   suppress_warnings=True,
+                                   stepwise=True)
+        self.results = None
 
     def plot_acf(self):
+        """Show the plot of ACF"""
         pd.plotting.autocorrelation_plot(self.series)
         plt.show()
 
     def plot_pacf(self):
+        """Show the plot of PACF"""
         plot_pacf(self.series['Adj Close'])
         plt.show()
 
-    def fit(self, p, d, q):
-        self.model = ARIMA(self.series['Adj Close'], order=(p, d, q))
-        self.model_fit = self.model.fit(disp=0)
-        return self.model_fit
+    def fit(self):
+        self.results = self.model.fit(disp=0)
 
-    def confidence_interval(self):
-        pass
-
-    def summary(self):
-        return self.model_fit.summary()
+    def conf_int(self, n_period):
+        _, conf_int = self.model.predict(n_period, return_conf_int=True, alpha=0.05)
+        return conf_int
 
     def plot(self):
         pass
