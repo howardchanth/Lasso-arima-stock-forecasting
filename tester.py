@@ -1,8 +1,9 @@
 from scipy import stats
+from statsmodels.tsa.stattools import adfuller
 import numpy as np
 
 
-class RunTester:
+class RunsTester:
     """
     Input:
     series : A series of positive and negative values, in this case stock returns
@@ -52,7 +53,7 @@ class RunTester:
         # H1: The sequence is not produced in a random manner
         z = self.get_z_statistic()
         p_value = stats.norm.sf(abs(z))
-
+        print("-" * 15 + "Runs Test" + "-" * 15)
         print(f"The Z statistic is: {z}")
         print(f"The p value is {p_value}")
         if p_value > alpha:
@@ -63,5 +64,32 @@ class RunTester:
         return
 
 
-class StationaryTester:
-    pass
+class StationarityTester:
+    # Dicky-Fuller
+    def __init__(self, series, params):
+        self.series = series
+        self.params = params
+
+    def test(self):
+        alpha = self.params['ALPHA']
+        adf_test = adfuller(self.series)
+        p_value = adf_test[1]
+        print("-" * 15 + "Dicky-Fuller Test" + "-" * 15)
+        print(f"The value of test statistics: is {adf_test[0]}")
+        print(f"The p value is: {adf_test[1]}")
+        if p_value > alpha:
+            print("Does not reject H0 - The stock price time series is not stationary")
+            print("ARIMA can be effectively applied on the stock price series")
+        else:
+            print("Reject H0 - The stock price time series is stationary")
+        return adf_test
+
+    def get_d(self):
+        alpha = self.params['ALPHA']
+        series = self.series
+        for d in range(1, 6):
+            series = series.diff().shift(-1).iloc[:-1]
+            adf_test = adfuller(series)
+            p_value = adf_test[1]
+            if p_value < alpha:
+                return d
