@@ -81,7 +81,7 @@ class StationarityTester:
             print("Does not reject H0 - The stock price time series is not stationary")
             print("ARIMA can be effectively applied on the stock price series")
         else:
-            print("Reject H0 - The stock price time series is stationary")
+            print("Reject H0 - The stock price time series is stationary\n")
         return adf_test
 
     def get_d(self):

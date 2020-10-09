@@ -1,15 +1,14 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from data_perocessing import DataProcessor
 from abc import ABC, abstractmethod
 
 # Lasso
-from sklearn.model_selection import cross_val_score, GridSearchCV
+from sklearn.model_selection import GridSearchCV
 from sklearn.linear_model import Lasso
 
 # ARIMA
-from statsmodels.graphics.tsaplots import plot_pacf
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 import pmdarima as pm
 
 
@@ -23,6 +22,7 @@ class Forecaster(ABC):
         # Dictionary of Hyper-parameters
         self.params = params
         self.scene_size = params['SCENE_SIZE']
+        self.dur = params['PRED_DUR']  # Prediction duration
 
         # Historical stock price to be retrieved from the training data
         self.history = None
@@ -31,17 +31,59 @@ class Forecaster(ABC):
     def fit(self, train):
         pass
 
-    def predict(self, test):
-        pass
+    def predict(self, *args, **kwargs):
+        """
+        Dummy method
+        :param test: Testing dataframe
+        :return: A series/dataframe of predictions
+        """
+        return
 
     def conf_int(self, n_period, alpha):
-        pass
+        """
+        Dummy method
+        :param n_period: Length of prediction period
+        :param alpha: Significance level of the test
+        :return: lower, upper: The lower and upper quantiles
+        """
+        lower = None
+        upper = None
+        return lower, upper
 
     def validate(self, test):
         pass
 
-    def plot(self, n_period, print_ci=False, alpha=0.05):
-        pass
+    def plot(self, n_period, plot_ci=False, alpha=0.05):
+        """
+        Function to produce the confidence interval of future stock price
+        :param n_period: Number of period of prediction
+        :param plot_ci: Whether plot the confidence interval or not
+        :param alpha: Significance level of confidence interval
+        :return: None
+        """
+        # Fetch prediction results
+        pred = self.predict(n_period)
+
+        if plot_ci:
+            lower, upper = self.conf_int(n_period, alpha)
+
+        # Combine history and prediction to the series to be plotted
+        history = np.array(self.history)
+        prices = np.append(history, pred)
+
+        # History days from the history series
+        n_hist_period = len(self.history)
+        pred_days = np.arange(n_period)
+        days = np.arange(-n_hist_period, n_period)
+
+        fig, ax = plt.subplots()
+        ax.plot(days, prices)
+        if plot_ci:
+            ax.fill_between(pred_days, lower, upper, color='g', alpha=.1)
+        plt.ylabel('Stock Prices')
+        plt.xlabel('Days')
+        plt.savefig(f"./plots/{self.params['SERIES_NAME']}_{self.name}_Price.png")
+        plt.show()
 
     def summary(self):
         pass
@@ -95,8 +137,7 @@ class GBMForecaster(Forecaster):
         self.mu = np.mean(returns)
         self.sigma = np.std(returns)
 
-    def predict(self, dur, dt=1):
-        # TODO: Redesign prediction strategy fetching the path having the least MSE
+    def simulate(self, dur, dt=1):
         """
             Simulate over scenarios and create an array of predicted stock prices
             :param dt: time increment -> a day in our case
@@ -122,67 +163,39 @@ class GBMForecaster(Forecaster):
         return s_pred
         # S_pred = np.insert(S_pred, 0, self.S_0, axis=1)
 
+    def predict(self, dur):
+        # Take the prediction path with least MSE to mean prediction
+        preds = self.simulate(dur)
+        mses = [np.average((preds[i] - preds.mean(axis=0)) ** 2) for i in range(preds.shape[0])]
+        index = mses.index(min(mses))
+        pred = preds[index]
+
+        return pred
+
     def validate(self, test):
         dur = test.shape[0]
-        pred = self.predict(dur)
-
-        mse = np.average((self.det_proj(pred) - test['Adj Close']) ** 2)
-
-        return mse
-
-    @staticmethod
-    def det_proj(pred):
-        """
-        Deterministic projection, take mean of stock price over the scenarios
-        """
-        return np.mean(pred, axis=0)
+        preds = self.simulate(dur)
+        mses = [np.average((preds[i] - test['Adj Close']) ** 2) for i in range(preds.shape[0])]
+        mapes = [np.average((preds[i] - test['Adj Close']) ** 2 / preds[i])
+                 for i in range(preds.shape[0])]
+        return min(mapes), min(mses)
 
     def conf_int(self, n_period, alpha):
-        pred = self.predict(n_period)
+        preds = self.simulate(n_period)
         # Select the scenarios with (alpha)th quantile and (1-alpha)th quantile of stock price
-        pred_mean = np.mean(pred, axis=0)
-        pred_mean_sorted = np.sort(pred_mean)
+        preds_mean = np.mean(preds, axis=0)
+        preds_mean_sorted = np.sort(preds_mean)
         # Fetch the scenario number of (alpha)th quantile and (1-alpha)th quantile
-        lower = pred_mean_sorted[round((len(pred_mean_sorted) - 1) * alpha)]
-        upper = pred_mean_sorted[round((len(pred_mean_sorted) - 1) * (1 - alpha))]
-        lower = np.where(pred_mean == lower)[0][0]
-        upper = np.where(pred_mean == upper)[0][0]
+        lower = preds_mean_sorted[round((len(preds_mean_sorted) - 1) * alpha)]
+        upper = preds_mean_sorted[round((len(preds_mean_sorted) - 1) * (1 - alpha))]
+        lower = np.where(preds_mean == lower)[0][0]
+        upper = np.where(preds_mean == upper)[0][0]
 
         # Obtain the stock (alpha)th quantile and (1-alpha)th stock price series with the index obtained
-        lower = pred[lower]
-        upper = pred[upper]
+        lower = preds[lower]
+        upper = preds[upper]
 
         return lower, upper
-
-    def plot(self, n_period, plot_ci=False, alpha=0.05):
-        """
-        Function to produce the confidence interval of future stock price
-        :param n_period: Number of period of prediction
-        :param plot_ci: Whether plot the confidence interval or not
-        :param alpha: Significance level of confidence interval
-        :return: None
-        """
-        # Randomly take a path generated
-        pred = self.predict(n_period)[0]
-        lower, upper = self.conf_int(n_period, alpha)
-
-        # Combine history and prediction to the series to be plotted
-        history = np.array(self.history)
-        prices = np.append(history, pred)
-
-        # History days from the history series
-        n_hist_period = len(self.history)
-        pred_days = np.arange(n_period)
-        days = np.arange(- n_hist_period, n_period)
-
-        fig, ax = plt.subplots()
-        ax.plot(days, prices)
-        if plot_ci:
-            ax.fill_between(pred_days, lower, upper, color='b', alpha=.1)
-        plt.ylabel('Stock Prices')
-        plt.xlabel('Days')
-        plt.savefig(f"./plots/{self.params['SERIES_NAME']}_{self.name}_Price.png")
-        plt.show()
 
     def summary(self):
         print("-" * 45)
@@ -195,6 +208,14 @@ class GBMForecaster(Forecaster):
 
 
 class LassoForecaster(Forecaster):
+    """
+    Class for the Lasso Forecaster
+
+    Attributes:
+    raw_predictors: raw input predictors from the raw data, each of series of dimension n
+    full_predictors: Horizontally stacked predictor matrix containing the time series
+    transformed predictors 1, 2, ..., J
+    """
 
     def __init__(self, params, name='Lasso'):
         super().__init__(params, name)
@@ -205,15 +226,17 @@ class LassoForecaster(Forecaster):
         # Initialize the Lasso model
         # Grid Search parameters
         self.parameters = {'alpha': [1e-15, 1e-10, 1e-8, 1e-4, 1e-3, 1e-2, 1, 5, 10, 20]}
-        self.predictors = None
+        self.raw_predictors = None
+        self.full_predictors = None
+        self.n_predictors = 0
         self.model = Lasso()
         self.regressor = GridSearchCV(self.model, self.parameters, scoring='neg_mean_squared_error', cv=10)
 
     def fit(self, train):
-        # TODO: Incorporate refit in
         """
         Function fitting the model and set up the initial value of prediction
         Update historical stock price
+
         :param train: A dataframe of training stock price and its predictors
         :return: None
         """
@@ -221,22 +244,65 @@ class LassoForecaster(Forecaster):
         s = train['Adj Close']
         self.s0 = s.iloc[-1]
 
-        # Convert predictors to time series predictors
-        # If fitting first time
-        if self.predictors is None:
-            raw_predictors = train.drop(['Adj Close', 'Date'], axis=1)
-            dp = DataProcessor(raw_predictors, self.params)
-            predictors = dp.get_lasso_predictor()
-            # Store time series predictors
-            self.predictors = predictors
-        else:
-            predictors = self.predictors
+        # Drop the date to obtain predictors
+        self.raw_predictors = train.drop(['Date'], axis=1)
 
-        # Truncate the response data to length n - lag to incorporate the predictors
-        responses = train['Adj Close'].values[self.lag:].reshape(-1, 1)
+        # Obtain differenced predictors
+        raw_diff_predictors = self.raw_predictors.diff().shift(-1).iloc[:-1]
 
-        # Number of predictors
-        self.regressor.fit(predictors, responses)
+        # Fetch full predictor matrix with J predictors
+        full_predictors = self.get_full_lasso_predictor(raw_diff_predictors)
+
+        # Store time series predictors and number of predictors
+        self.full_predictors = full_predictors
+        self.n_predictors = self.raw_predictors.shape[1]
+
+        # Obtain the differenced response vector
+        # Truncate the differenced response to length n - lag to incorporate the predictors
+        responses = train['Adj Close'].diff().shift(-1).iloc[:-1].values[self.lag:].reshape(-1, 1)
+        # scale responses
+        responses_scaled = (responses - responses.mean()) / responses.std()
+
+        # Fit with the differenced and scaled response
+        self.regressor.fit(full_predictors, responses_scaled)
+
+    def get_full_lasso_predictor(self, raw_predictors):
+        """
+        Produce time series data for fitting the time series Lasso regression
+        :return: predictors to be fitted for Lasso in numpy
+        """
+        p = raw_predictors.shape[1]
+        predictors = None
+
+        data = raw_predictors.values
+        # Fore every time series predictor, create time series matrix
+        for i in range(p):
+            x = data[:, i]
+
+            time_series_matrix = self._time_series_matrix(x, self.lag)
+
+            # If processing the first predictor
+            if i == 0:
+                predictors = time_series_matrix
+            else:
+                # Stack the matrices horizontally
+                predictors = np.hstack([predictors, self._time_series_matrix(x, self.lag)])
+
+        return predictors
+
+    @staticmethod
+    def _time_series_matrix(x, q):
+        """
+        Get the time series matrix with lag q of a certain predictor
+        :return: The time series (n-q) x q matrix with lag p with
+        """
+        n = x.shape[0]
+
+        matrix = np.zeros([n - q, q])
+        for i in range(q):
+            matrix[:, i] = x[i:(n - q + i)]
+
+        return matrix
 
     def validate(self, test):
         """
@@ -244,42 +310,84 @@ class LassoForecaster(Forecaster):
         :return: Testing MSE
         """
         dur = test.shape[0]
-        responses = test['Adj Close'].values.reshape(-1, 1)
-        pred = self.predict(dur)
+        responses = test['Adj Close'].values
+        pred = self.predict(dur=dur)
         mse = np.average((pred - responses) ** 2)
-        return mse
+        mape = np.average((pred - responses) ** 2 / pred)
+        return mape, mse
 
-    def predict(self, dur):
-        # TODO: Decide whether n_period or testing data
-        # Create copy of regressor and predictors
-        predictors = self.predictors
+    def predict(self, dur=0, raw_predictors=None):
+        # If no raw predictors input, use the one from training
+        if raw_predictors is None:
+            raw_predictors = self.raw_predictors
+
+        # Initialize previous prediction (Adjusted close)
+        prev_pred = self.s0
+
+        # Create differenced raw predictors
+        raw_diff_predictors = self.raw_predictors.diff().shift(-1).iloc[:-1]
+        # Create a copy of regressor
         regressor = self.regressor
+        # Create prediction collection
         prediction = pd.Series([])
 
         for _ in range(dur):
             # Make prediction of (n-lag) vector
-            # TODO: Fix the bug by completing the refit and predict function
-            pred = regressor.predict(predictors)
-            prediction.append(pd.Series(pred[-1]))
-            predictors = np.column_stack([predictors, pred])
-            # collect predicted stock price
-            prediction = pred[-1]
+            full_predictors = self.get_full_lasso_predictor(raw_diff_predictors)
+            pred_scaled = regressor.predict(full_predictors)  # Scaled predictor
+
+            # Obtain stock price prediction
+            pred = pred_scaled[-1] * raw_diff_predictors['Adj Close'].std() \
+                   + raw_diff_predictors['Adj Close'].mean()
+
+            # Scale back the predictors and add to last row as predictions
+            raw_diff_predictors.loc[len(raw_diff_predictors)] = \
+                (raw_diff_predictors.mean() + (pred_scaled[-1] * raw_diff_predictors.std())).values
+
+            # Obtain the predicted stock price adding the difference to the previous stock price
+            prev_pred = prev_pred + pred
+            # Collect the predictions
+            prediction = prediction.append(pd.Series(prev_pred))
+
+            # Delete the first row and append
+            raw_diff_predictors = raw_diff_predictors[1:].reset_index().iloc[:, 1:]
 
         return prediction
 
     def conf_int(self, n_period, alpha):
-        # TODO: Investigate how to represent the CI for Lasso. Bootstrapping?
+        # TODO: Finish CI bootstrapping
         """
         Function computing the confidence interval of the Lasso regression
         :param n_period: Number of period of prediction
         :param alpha: Significance level of confidence interval
         :return: None
         """
-        pass
+        # Create a copy of raw predictors from the input
+        raw_predictors = self.raw_predictors
+        # Collection of predictions over the scenarios
+        predictions = pd.DataFrame()
 
-    def plot(self, n_period, plot_ci=False, alpha=0.05):
-        # TODO: Design plotting for Lasso
-        pass
+        for _ in range(self.params['SCENE_SIZE']):
+            # Bootstrapping sample from predictors and
+            sample = raw_predictors.sample(frac=1, replace=True)
+            pred = self.predict(dur=self.dur, raw_predictors=sample)
+            # Append predictions to the collection
+            predictions = predictions.append(dict(zip(predictions.columns, pred)), ignore_index=True)
+
+        # Select the scenarios with (alpha)th quantile and (1-alpha)th quantile of stock price
+        predictions_mean = np.mean(predictions, axis=0)
+        predictions_mean_sorted = np.sort(predictions_mean)
+        # Fetch the scenario number of (alpha)th quantile and (1-alpha)th quantile
+        lower = predictions_mean_sorted[round((len(predictions_mean_sorted) - 1) * alpha)]
+        upper = predictions_mean_sorted[round((len(predictions_mean_sorted) - 1) * (1 - alpha))]
+        lower = np.where(predictions_mean == lower)[0][0]
+        upper = np.where(predictions_mean == upper)[0][0]
+
+        # Obtain the stock (alpha)th quantile and (1-alpha)th stock price series with the index obtained
+        lower = predictions[lower]
+        upper = predictions[upper]
+
+        return lower, upper
 
     def summary(self):
         print("-" * 50)
@@ -301,22 +409,22 @@ class ArimaForecaster(Forecaster):
         self.model = None
         self.results = None
 
-    @staticmethod
-    def plot_acf(series):
+    def plot_acf(self, series):
         """
         Show the plot of ACF
         @param series: The stock price series
         """
-        pd.plotting.autocorrelation_plot(series)
+        plot_acf(series, lags=range(10))
+        plt.savefig(f"./plots/{self.params['SERIES_NAME']}_ARIMA_ACF.png")
         plt.show()
 
-    @staticmethod
-    def plot_pacf(series):
+    def plot_pacf(self, series):
         """
         Show the plot of PACF
         @param series: The stock price series
         """
-        plot_pacf(series)
+        plot_pacf(series, lags=range(10))
+        plt.savefig(f"./plots/{self.params['SERIES_NAME']}_ARIMA_PACF.png")
         plt.show()
 
     def fit(self, train):
@@ -338,11 +446,12 @@ class ArimaForecaster(Forecaster):
         return pred
 
     def validate(self, test):
-        n_period = test.shape()[0]
+        n_period = test.shape[0]
         pred = self.predict(n_period)
         responses = test['Adj Close'].values.reshape(-1, 1)
         mse = np.average((pred - responses) ** 2)
-        return mse
+        mape = np.average((pred - responses) ** 2 / responses)
+        return mape, mse
 
     def conf_int(self, n_period, alpha=0.05):
         """
@@ -352,37 +461,7 @@ class ArimaForecaster(Forecaster):
         :return: None
         """
         _, conf_int = self.model.predict(n_period, return_conf_int=True, alpha=alpha)
-        return conf_int
-
-    def plot(self, n_period, plot_ci=False, alpha=0.05):
-        # TODO: investigate why straight line
-        """
-        Function to produce the confidence interval of future stock price
-        :param n_period: Number of period of prediction
-        :param plot_ci: Whether plot the confidence interval or not
-        :param alpha: Significance level of confidence interval
-        :return: None
-        """
-        # Fetch prediction and confidence intervals
-        pred, conf_int = self.model.predict(n_period, return_conf_int=True, alpha=alpha)
-        history = np.array(self.history)
-        prices = np.append(history, pred)
-
-        # History days from the history series
-        n_hist_period = len(self.history)
-        pred_days = np.arange(n_period)
-        days = np.arange(- n_hist_period, n_period)
-
-        lower = conf_int[:, 0]
-        upper = conf_int[:, 1]
-        fig, ax = plt.subplots()
-        ax.plot(days, prices)
-        if plot_ci:
-            ax.fill_between(pred_days, lower, upper, color='r', alpha=.1)
-        plt.ylabel('Stock Prices')
-        plt.xlabel('Prediction Days')
-        plt.savefig(f"./plots/{self.params['SERIES_NAME']}_{self.name}_Price.png")
-        plt.show()
+        return conf_int[:, 0], conf_int[:, 1]
 
     def summary(self):
-        print(self.summary())
+        print(self.model.summary())

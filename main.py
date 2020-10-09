@@ -1,6 +1,18 @@
+# Ignore warnings
+def warn(*args, **kwargs):
+    pass
+
+
+import warnings
+
+warnings.warn = warn
+
 from tester import RunsTester, StationarityTester
 from models import LassoForecaster, ArimaForecaster, GBMForecaster
 import pandas as pd
+import numpy as np
+
+# TODO: Incorporate realtime prediction
 import yfinance as yf
 import matplotlib.pyplot as plt
 
@@ -12,14 +24,16 @@ DATA_PATH_HSI = "data/HSI_aug_15to20.csv"
 PARAMS = {
     # TODO: Exclude weekends in the prediction plot
     'START_DATE': "2015-08-17",
-    "END_DATE": "2020-07-20",
-    "SERIES_NAME": "HSI",
-    "SCENE_SIZE": 1000,
+    "END_DATE": "2020-07-17",
+    'PRED_END_DATE': "2021-07-21",
+    "PRED_DUR": 365,
+    "SERIES_NAME": "SP500",
+    "MODEL_NAME": "Lasso",
+    "SCENE_SIZE": 100,
     "ALPHA": 0.05,
     "PLOT_CI": True,
-    "d": 0,
-    # TODO: Optimize lags by cross validation
-    "LAG": 3
+    "d": 0,  # Initial rate of differencing parameter
+    "LAG": 10  # Manual tuning
 }
 # --------------------------------------------------
 #                    Load Data
@@ -35,8 +49,9 @@ else:
 # Incorporate starting and ending date
 start = raw_data['Date'][raw_data['Date'] == PARAMS['START_DATE']].index[0]
 end = raw_data['Date'][raw_data['Date'] == PARAMS['END_DATE']].index[0]
-# raw_data = raw_data.set_index('Date')
+
 raw_data = raw_data[start:end]
+raw_data = raw_data.reset_index().drop(['index'], axis=1)
 
 series = raw_data['Adj Close']
 # --------------------------------------------------
@@ -59,7 +74,12 @@ PARAMS['d'] = d
 # --------------------------------------------------
 
 # Initialize forecaster
-forecaster = GBMForecaster(PARAMS)
+if PARAMS['MODEL_NAME'] == "Lasso":
+    forecaster = LassoForecaster(PARAMS)
+elif PARAMS['MODEL_NAME'] == "GBM":
+    forecaster = GBMForecaster(PARAMS)
+else:
+    forecaster = ArimaForecaster(PARAMS)
 
 # Fitting the model
 train_test_sep = int(0.7 * raw_data.shape[0])
@@ -68,11 +88,25 @@ forecaster.fit(raw_data.loc[:train_test_sep])
 # Model summary
 forecaster.summary()
 
-# Model validation
-mse = forecaster.validate(raw_data.loc[train_test_sep:])
+# Forecasting one year stock price
+prediction = forecaster.predict(PARAMS['PRED_DUR'])
 
+# Model validation
+mape, mse = forecaster.validate(raw_data.loc[train_test_sep:])
+print("-" * 20 + "MSEs" + "-" * 20)
+print(f"The MSE is: {mse}")
+print(f"The RMSE is: {np.sqrt(mse)}")
+print(f"The MAPE is: {mape}")
+# --------------------------------------------------
+#                     Plots
+# --------------------------------------------------
 # Plot the forecasting results
 forecaster.plot(365, plot_ci=PARAMS['PLOT_CI'], alpha=PARAMS['ALPHA'])
 
-# ## GBM ##
-# print(conf_int[1][365], conf_int[0][365])
+if PARAMS['MODEL_NAME'] == "ARIMA":
+    # Obtain the differenced series
+    series_diff = series.diff().shift(-1).iloc[:-1]
+
+    # Plot ACF and PACF
+    forecaster.plot_acf(series_diff)
+    forecaster.plot_pacf(series_diff)
