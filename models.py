@@ -9,6 +9,7 @@ from sklearn.linear_model import Lasso
 
 # ARIMA
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.arima.model import ARIMA
 import pmdarima as pm
 
 
@@ -176,7 +177,7 @@ class GBMForecaster(Forecaster):
         dur = test.shape[0]
         preds = self.simulate(dur)
         mses = [np.average((preds[i] - test['Adj Close']) ** 2) for i in range(preds.shape[0])]
-        mapes = [np.average((preds[i] - test['Adj Close']) ** 2 / preds[i])
+        mapes = [np.average(abs(preds[i] - test['Adj Close']) / preds[i])
                  for i in range(preds.shape[0])]
         return min(mapes), min(mses)
 
@@ -240,9 +241,9 @@ class LassoForecaster(Forecaster):
         :param train: A dataframe of training stock price and its predictors
         :return: None
         """
-        # Copy stock price info
-        s = train['Adj Close']
-        self.s0 = s.iloc[-1]
+        # Copy stock price info to attributes
+        self.history = train['Adj Close']
+        self.s0 = self.history.iloc[-1]
 
         # Drop the date to obtain predictors
         self.raw_predictors = train.drop(['Date'], axis=1)
@@ -313,7 +314,7 @@ class LassoForecaster(Forecaster):
         responses = test['Adj Close'].values
         pred = self.predict(dur=dur)
         mse = np.average((pred - responses) ** 2)
-        mape = np.average((pred - responses) ** 2 / pred)
+        mape = np.average(abs(pred - responses) / pred)
         return mape, mse
 
     def predict(self, dur=0, raw_predictors=None):
@@ -352,10 +353,9 @@ class LassoForecaster(Forecaster):
             # Delete the first row and append
             raw_diff_predictors = raw_diff_predictors[1:].reset_index().iloc[:, 1:]
 
-        return prediction
+        return prediction.values
 
     def conf_int(self, n_period, alpha):
-        # TODO: Finish CI bootstrapping
         """
         Function computing the confidence interval of the Lasso regression
         :param n_period: Number of period of prediction
@@ -367,15 +367,11 @@ class LassoForecaster(Forecaster):
         # Collection of predictions over the scenarios
         predictions = pd.DataFrame()
 
-        for _ in range(self.params['SCENE_SIZE']):
-            # Bootstrapping sample from predictors and
-            sample = raw_predictors.sample(frac=1, replace=True)
-            pred = self.predict(dur=self.dur, raw_predictors=sample)
-            # Append predictions to the collection
-            predictions = predictions.append(dict(zip(predictions.columns, pred)), ignore_index=True)
+        predictions = [self.predict(dur=n_period, raw_predictors=raw_predictors.sample(frac=1, replace=True).values)
+                       for _ in range(self.params['SCENE_SIZE'])]
 
         # Select the scenarios with (alpha)th quantile and (1-alpha)th quantile of stock price
-        predictions_mean = np.mean(predictions, axis=0)
+        predictions_mean = np.mean(predictions, axis=1)
         predictions_mean_sorted = np.sort(predictions_mean)
         # Fetch the scenario number of (alpha)th quantile and (1-alpha)th quantile
         lower = predictions_mean_sorted[round((len(predictions_mean_sorted) - 1) * alpha)]
@@ -431,26 +427,34 @@ class ArimaForecaster(Forecaster):
         series = train['Adj Close']
         # Record stock price series
         self.history = series
-        self.model = pm.auto_arima(series, start_p=1, start_q=1,
+        auto_model = pm.auto_arima(series, start_p=1, start_q=1,
                                    max_p=3, max_q=3, m=12,
                                    start_P=0, seasonal=False,
                                    d=self.d, D=1, trace=True,
                                    error_action='ignore',
                                    suppress_warnings=True,
                                    stepwise=True)
+        self.model = ARIMA(series, order=auto_model.order)
 
-        self.results = self.model.fit(series, disp=0)
+        self.results = self.model.fit()
 
     def predict(self, n_period):
-        pred = self.model.predict(n_period)
+        # Start of prediction, end of training samples
+        start = len(self.history)
+        pred = self.results.simulate(nsimulations=n_period, anchor=start).values
         return pred
 
     def validate(self, test):
+        """
+        Test the predictive capability of the model with the testing datasets
+        :param test: Testing data
+        :return: MSE and MAPE
+        """
         n_period = test.shape[0]
         pred = self.predict(n_period)
         responses = test['Adj Close'].values.reshape(-1, 1)
         mse = np.average((pred - responses) ** 2)
-        mape = np.average((pred - responses) ** 2 / responses)
+        mape = np.average(abs(pred - responses) / responses)
         return mape, mse
 
     def conf_int(self, n_period, alpha=0.05):
@@ -460,8 +464,27 @@ class ArimaForecaster(Forecaster):
         :param alpha: Significance level of confidence interval
         :return: None
         """
-        _, conf_int = self.model.predict(n_period, return_conf_int=True, alpha=alpha)
-        return conf_int[:, 0], conf_int[:, 1]
+
+        # Start of prediction, end of training samples
+        start = len(self.history)
+
+        preds = [self.results.simulate(nsimulations=n_period, anchor=start).values
+                 for _ in range(self.params['SCENE_SIZE'])]
+
+        # Select the scenarios with (alpha)th quantile and (1-alpha)th quantile of stock price
+        preds_mean = np.mean(preds, axis=1)
+        preds_mean_sorted = np.sort(preds_mean)
+        # Fetch the scenario number of (alpha)th quantile and (1-alpha)th quantile
+        lower = preds_mean_sorted[round((len(preds_mean_sorted) - 1) * alpha)]
+        upper = preds_mean_sorted[round((len(preds_mean_sorted) - 1) * (1 - alpha))]
+        lower = np.where(preds_mean == lower)[0][0]
+        upper = np.where(preds_mean == upper)[0][0]
+
+        # Obtain the stock (alpha)th quantile and (1-alpha)th stock price series with the index obtained
+        lower = preds[lower]
+        upper = preds[upper]
+
+        return lower, upper
 
     def summary(self):
-        print(self.model.summary())
+        print(self.results.summary())

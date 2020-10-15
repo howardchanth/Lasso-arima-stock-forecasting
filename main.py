@@ -22,18 +22,17 @@ DATA_PATH_HSI = "data/HSI_aug_15to20.csv"
 
 """ Model parameters"""
 PARAMS = {
-    # TODO: Exclude weekends in the prediction plot
     'START_DATE': "2015-08-17",
     "END_DATE": "2020-07-17",
     'PRED_END_DATE': "2021-07-21",
     "PRED_DUR": 365,
     "SERIES_NAME": "SP500",
     "MODEL_NAME": "Lasso",
-    "SCENE_SIZE": 100,
+    "SCENE_SIZE": 10,
     "ALPHA": 0.05,
     "PLOT_CI": True,
     "d": 0,  # Initial rate of differencing parameter
-    "LAG": 10  # Manual tuning
+    "LAG": 3  # Manual tuning
 }
 # --------------------------------------------------
 #                    Load Data
