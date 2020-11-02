@@ -12,13 +12,15 @@ from models import LassoForecaster, ArimaForecaster, GBMForecaster
 import pandas as pd
 import numpy as np
 
-# TODO: Incorporate realtime prediction
+import datetime
+
 import yfinance as yf
-import matplotlib.pyplot as plt
 
 # Data paths
-DATA_PATH_SP = "data/SP500_aug_15to20.csv"
-DATA_PATH_HSI = "data/HSI_aug_15to20.csv"
+DATA_PATHS = {
+    "^GSPC": "data/HSI_aug_15to20.csv",
+    "^HSI": "data/HSI_aug_15to20.csv"
+}
 
 """ Model parameters"""
 PARAMS = {
@@ -26,33 +28,44 @@ PARAMS = {
     "END_DATE": "2020-07-17",
     'PRED_END_DATE': "2021-07-21",
     "PRED_DUR": 365,
-    "SERIES_NAME": "SP500",
-    "MODEL_NAME": "Lasso",
-    "SCENE_SIZE": 10,
+    "SERIES_NAME": "^GSPC",  # ^GSPC: S&P500 Index; ^HSI: HSI Index
+    "IS_REALTIME": True,
+    "MODEL_NAME": "GBM",  # Lasso; Ridge; GBM; ARIMA
+    "SCENE_SIZE": 1000,
     "ALPHA": 0.05,
     "PLOT_CI": True,
     "d": 0,  # Initial rate of differencing parameter
-    "LAG": 3  # Manual tuning
+    "LAG": 1,  # Lag of the ARIMA model (p) # TODO: Solve zero order problem
+    "MA_ORDER": 0  # Order of the MA series (q)
 }
 # --------------------------------------------------
 #                    Load Data
 # --------------------------------------------------
+
 # Read data from path
-if PARAMS['SERIES_NAME'] == "HSI":
-    raw_data = pd.read_csv(DATA_PATH_HSI)
-elif PARAMS['SERIES_NAME'] == "SP500":
-    raw_data = pd.read_csv(DATA_PATH_SP)
+if PARAMS['IS_REALTIME']:
+    raw_data = yf.Ticker(PARAMS["SERIES_NAME"])
+    raw_data = raw_data.history(period="1d",
+                                interval="1d",
+                                start=PARAMS['START_DATE'],
+                                end=PARAMS['END_DATE']
+                                ).reset_index()
 else:
-    ValueError("Invalid data name. Unable to load series.")
+    try:
+        raw_data = pd.read_csv(DATA_PATHS[PARAMS['SERIES_NAME']])
+        # Incorporate starting and ending date
+        start = raw_data['Date'][raw_data['Date'] == PARAMS['START_DATE']].index[0]
+        end = raw_data['Date'][raw_data['Date'] == PARAMS['END_DATE']].index[0]
 
-# Incorporate starting and ending date
-start = raw_data['Date'][raw_data['Date'] == PARAMS['START_DATE']].index[0]
-end = raw_data['Date'][raw_data['Date'] == PARAMS['END_DATE']].index[0]
+        raw_data = raw_data[start:end]
+        raw_data = raw_data.reset_index().drop(['index'], axis=1)
 
-raw_data = raw_data[start:end]
-raw_data = raw_data.reset_index().drop(['index'], axis=1)
+    except ValueError:
+        ValueError("Invalid data name. Unable to load series.")
 
-series = raw_data['Adj Close']
+raw_data = raw_data.reset_index().drop(['Date'], axis=1)
+series = raw_data['Close']
+
 # --------------------------------------------------
 #                     Testing
 # --------------------------------------------------
@@ -71,9 +84,10 @@ PARAMS['d'] = d
 # --------------------------------------------------
 #                    Simulation
 # --------------------------------------------------
-
+# TODO: Chose the optimal part from validation
+# TODO: Refactor the codes a bit
 # Initialize forecaster
-if PARAMS['MODEL_NAME'] == "Lasso":
+if PARAMS['MODEL_NAME'] == "Lasso" or PARAMS['MODEL_NAME'] == "Ridge":
     forecaster = LassoForecaster(PARAMS)
 elif PARAMS['MODEL_NAME'] == "GBM":
     forecaster = GBMForecaster(PARAMS)
@@ -88,6 +102,8 @@ forecaster.fit(raw_data.loc[:train_test_sep])
 forecaster.summary()
 
 # Forecasting one year stock price
+duration = (datetime.datetime.strptime(PARAMS['PRED_END_DATE'], "%Y-%m-%d") -
+            datetime.datetime.strptime(PARAMS['END_DATE'], "%Y-%m-%d")).days
 prediction = forecaster.predict(PARAMS['PRED_DUR'])
 
 # Model validation
