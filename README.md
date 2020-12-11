@@ -1,1 +1,1 @@
-"# Initial version of Financial forecaster" 
+# Initial version of Financial forecaster
