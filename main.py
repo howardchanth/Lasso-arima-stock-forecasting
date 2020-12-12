@@ -1,12 +1,3 @@
-# Ignore warnings
-def warn(*args, **kwargs):
-    pass
-
-
-import warnings
-
-warnings.warn = warn
-
 from tester import RunsTester, StationarityTester
 from models import LassoForecaster, ArimaForecaster, GBMForecaster
 import pandas as pd
@@ -15,6 +6,10 @@ import numpy as np
 import datetime
 
 import yfinance as yf
+
+import warnings
+
+warnings.filterwarnings("ignore")
 
 # Data paths
 DATA_PATHS = {
@@ -28,14 +23,16 @@ PARAMS = {
     "END_DATE": "2020-07-17",
     'PRED_END_DATE': "2021-07-21",
     "PRED_DUR": 365,
-    "SERIES_NAME": "^GSPC",  # ^GSPC: S&P500 Index; ^HSI: HSI Index
-    "IS_REALTIME": True,
+    "SERIES_NAME": "^HSI",  # ^GSPC: S&P500 Index; ^HSI: HSI Index
+    "IS_REALTIME": False,
     "MODEL_NAME": "GBM",  # Lasso; Ridge; GBM; ARIMA
     "SCENE_SIZE": 1000,
-    "ALPHA": 0.05,
+    "ALPHA": 0.05,  # Level of significance
     "PLOT_CI": True,
+    # Lasso-based ARIMA specific settings
+    # Orders from traditional ARIMA model
     "d": 0,  # Initial rate of differencing parameter
-    "LAG": 1,  # Lag of the ARIMA model (p) # TODO: Solve zero order problem
+    "LAG": 1,  # Lag of the ARIMA model (p)
     "MA_ORDER": 0  # Order of the MA series (q)
 }
 # --------------------------------------------------
@@ -63,6 +60,7 @@ else:
     except ValueError:
         ValueError("Invalid data name. Unable to load series.")
 
+
 raw_data = raw_data.reset_index().drop(['Date'], axis=1)
 series = raw_data['Close']
 
@@ -84,8 +82,7 @@ PARAMS['d'] = d
 # --------------------------------------------------
 #                    Simulation
 # --------------------------------------------------
-# TODO: Chose the optimal part from validation
-# TODO: Refactor the codes a bit
+# TODO: Choose the optimal part from validation
 # Initialize forecaster
 if PARAMS['MODEL_NAME'] == "Lasso" or PARAMS['MODEL_NAME'] == "Ridge":
     forecaster = LassoForecaster(PARAMS)

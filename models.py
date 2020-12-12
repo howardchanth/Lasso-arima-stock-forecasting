@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.lines as lines
 from abc import ABC, abstractmethod
 
 # Lasso
@@ -178,6 +177,7 @@ class GBMForecaster(Forecaster):
         :param dur: number of days of prediction
         :return: Path of prediction
         """
+        # TODO: Just randomly selectg a path
         # Take the prediction path with least MSE to mean prediction
         preds = self.simulate(dur)
         mses = [np.average((preds[i] - preds.mean(axis=0)) ** 2) for i in range(preds.shape[0])]
@@ -196,8 +196,8 @@ class GBMForecaster(Forecaster):
 
         # Copy the testing data to self
         self.testing = test['Close']
-        # TODO: This is the least variance, not the best
         preds = self.simulate(dur)
+        # Compute SCENE_SIZE number of MSEs and choose the least one
         mses = [np.average((preds[i] - self.testing) ** 2) for i in range(preds.shape[0])]
         mapes = [np.average(abs(preds[i] - test['Close']) / preds[i])
                  for i in range(preds.shape[0])]
@@ -302,6 +302,9 @@ class LassoForecaster(Forecaster):
         Produce time series data for fitting the time series Lasso regression
         :return: predictors to be fitted for Lasso in numpy
         """
+        # If Q is 0
+        if self.lag == 0:
+            return raw_predictors.values
         p = raw_predictors.shape[1]
         predictors = None
 
