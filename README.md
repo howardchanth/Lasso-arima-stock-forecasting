@@ -1,1 +1,1 @@
-"# Comparing Lasso and ARIMA in stock price forecasting" 
+# Initial version of Financial forecaster
