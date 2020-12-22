@@ -58,8 +58,8 @@
     <th colspan = "2">ARIMA Specific Parameters</th>
   </tr>
   <tr>
-    <th>d</th>
-    <th>Number of differencing needed to make the tie series stationary, equivalent to d in ARIMA(p,d,q) model</th>
+    <td>d</td>
+    <td>Number of differencing needed to make the tie series stationary, equivalent to d in ARIMA(p,d,q) model</th>
   </tr>
   <tr>
     <td>LAG</td>
